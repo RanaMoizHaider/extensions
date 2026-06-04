@@ -164,7 +164,7 @@
     "typecheck": "tsc --noEmit"
   },
   "type": "module",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "dependencies": {
     "@pierre/diffs": "^1.2.7",
     "@radix-ui/react-dropdown-menu": "^2.1.16",
