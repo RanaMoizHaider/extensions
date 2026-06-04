@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { GitPullRequest, Loader2 } from "lucide-react";
 import { alert_error } from "@/lib/git";
+import { run_pinned } from "@/lib/git-scope";
 import { cleanup_branch, remove_worktree_or_branch } from "@/lib/git-cleanup";
 import { merge_pr, close_pr, fetch_resolved_status, type MergeMethod } from "@/lib/git-prs";
 import { read_pr_cache, write_pr_cache, clear_pr_cache } from "@/lib/pr-cache";
@@ -56,7 +57,7 @@ export function PrInfoPanel() {
   const merge = useCallback(async (number: number, method: MergeMethod, deleteBranch: boolean) => {
     set_pending(method);
     try {
-      await merge_pr(number, method, false);
+      await run_pinned((project) => merge_pr(number, method, false, project));
     } catch (err) {
       await alert_error(`Could not merge PR #${number}`, err);
       set_pending(null);
@@ -82,7 +83,7 @@ export function PrInfoPanel() {
   const close = useCallback(async (number: number) => {
     set_pending("close");
     try {
-      await close_pr(number);
+      await run_pinned((project) => close_pr(number, project));
       await clear_pr_cache();
       return true;
     } catch (err) {

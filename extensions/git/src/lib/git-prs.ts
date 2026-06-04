@@ -15,12 +15,13 @@ export function merge_pr(
   number: number,
   method: MergeMethod,
   deleteBranch: boolean,
+  project?: string,
 ): Promise<void> {
-  return muxy.git.pr.merge({ number, method, deleteBranch });
+  return muxy.git.pr.merge({ number, method, deleteBranch, project });
 }
 
-export function close_pr(number: number): Promise<void> {
-  return muxy.git.pr.close({ number });
+export function close_pr(number: number, project?: string): Promise<void> {
+  return muxy.git.pr.close({ number, project });
 }
 
 export function create_pr(
@@ -28,6 +29,7 @@ export function create_pr(
   body: string,
   baseBranch: string | undefined,
   draft: boolean,
+  project?: string,
 ): Promise<MuxyGitPR> {
-  return muxy.git.pr.create({ title, body, baseBranch, draft });
+  return muxy.git.pr.create({ title, body, baseBranch, draft, project });
 }

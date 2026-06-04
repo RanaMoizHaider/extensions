@@ -1,4 +1,5 @@
 import { active_worktree_path, alert_error, open_url } from "@/lib/git";
+import { run_pinned } from "@/lib/git-scope";
 import type { CommitNode } from "@/lib/git-graph";
 
 export async function copy_hash(commit: CommitNode): Promise<void> {
@@ -41,7 +42,7 @@ export async function open_commit_on_github(commit: CommitNode): Promise<void> {
 
 export async function cherry_pick_commit(commit: CommitNode, onDone: () => void): Promise<void> {
   try {
-    await muxy.git.cherryPick({ hash: commit.hash });
+    await run_pinned((project) => muxy.git.cherryPick({ hash: commit.hash, project }));
     await muxy.toast({ body: `Cherry-picked ${commit.shortHash}`, variant: "success" }).catch(() => undefined);
     onDone();
   } catch (err) {

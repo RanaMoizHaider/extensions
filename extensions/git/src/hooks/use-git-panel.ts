@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { try_action, to_view_status, active_worktree_path } from "@/lib/git";
+import { run_pinned, is_busy, on_busy_change } from "@/lib/git-scope";
 import type { GitStatus } from "@/lib/git-status";
 
 export type RepoState =
@@ -39,7 +40,13 @@ export function use_git_panel() {
     [cache_when_resolved],
   );
 
+  const pending_switch = useRef(false);
+
   const switch_scope = useCallback(async () => {
+    if (is_busy()) {
+      pending_switch.current = true;
+      return;
+    }
     const id = ++refresh_id.current;
     const current = () => refresh_id.current === id;
     const key = active_worktree_path();
@@ -73,6 +80,7 @@ export function use_git_panel() {
     if (reconcile_timer.current) clearTimeout(reconcile_timer.current);
     reconcile_timer.current = setTimeout(async () => {
       reconcile_timer.current = null;
+      if (is_busy()) return;
       const id = ++refresh_id.current;
       const key = active_worktree_path();
       let next: RepoState;
@@ -126,7 +134,10 @@ export function use_git_panel() {
   const stage = useCallback(
     async (path: string) => {
       move_entry(path, "unstaged", "staged");
-      const ok = await try_action(() => muxy.git.stage({ paths: [path] }), "Could not stage file");
+      const ok = await try_action(
+        () => run_pinned((project) => muxy.git.stage({ paths: [path], project })),
+        "Could not stage file",
+      );
       if (ok) reconcile();
       else void refresh();
       return ok;
@@ -137,7 +148,10 @@ export function use_git_panel() {
   const unstage = useCallback(
     async (path: string) => {
       move_entry(path, "staged", "unstaged");
-      const ok = await try_action(() => muxy.git.unstage({ paths: [path] }), "Could not unstage file");
+      const ok = await try_action(
+        () => run_pinned((project) => muxy.git.unstage({ paths: [path], project })),
+        "Could not unstage file",
+      );
       if (ok) reconcile();
       else void refresh();
       return ok;
@@ -152,7 +166,11 @@ export function use_git_panel() {
       const untracked = entry?.label === "?";
       const ok = await try_action(
         () =>
-          muxy.git.discard(untracked ? { untrackedPaths: [path] } : { paths: [path] }),
+          run_pinned((project) =>
+            muxy.git.discard(
+              untracked ? { untrackedPaths: [path], project } : { paths: [path], project },
+            ),
+          ),
         "Could not discard file",
       );
       await refresh();
@@ -166,7 +184,7 @@ export function use_git_panel() {
     const paths = state.status.unstaged.filter((e) => e.label !== "?").map((e) => e.path);
     const untrackedPaths = state.status.unstaged.filter((e) => e.label === "?").map((e) => e.path);
     const ok = await try_action(
-      () => muxy.git.discard({ paths, untrackedPaths }),
+      () => run_pinned((project) => muxy.git.discard({ paths, untrackedPaths, project })),
       "Could not discard changes",
     );
     await refresh();
@@ -174,20 +192,29 @@ export function use_git_panel() {
   }, [state, refresh]);
 
   const stage_all = useCallback(async () => {
-    const ok = await try_action(() => muxy.git.stage({ paths: [] }), "Could not stage changes");
+    const ok = await try_action(
+      () => run_pinned((project) => muxy.git.stage({ paths: [], project })),
+      "Could not stage changes",
+    );
     await refresh();
     return ok;
   }, [refresh]);
 
   const unstage_all = useCallback(async () => {
-    const ok = await try_action(() => muxy.git.unstage({ paths: [] }), "Could not unstage changes");
+    const ok = await try_action(
+      () => run_pinned((project) => muxy.git.unstage({ paths: [], project })),
+      "Could not unstage changes",
+    );
     await refresh();
     return ok;
   }, [refresh]);
 
   const commit = useCallback(
     async (message: string) => {
-      const ok = await try_action(() => muxy.git.commit({ message }), "Commit failed");
+      const ok = await try_action(
+        () => run_pinned((project) => muxy.git.commit({ message, project })),
+        "Commit failed",
+      );
       if (ok) await refresh();
       return ok;
     },
@@ -197,7 +224,10 @@ export function use_git_panel() {
   const sync = useCallback(
     async (op: "push" | "pull") => {
       const ok = await try_action(
-        () => (op === "push" ? muxy.git.push() : muxy.git.pull()),
+        () =>
+          run_pinned((project) =>
+            op === "push" ? muxy.git.push({ project }) : muxy.git.pull({ project }),
+          ),
         op === "push" ? "Push failed" : "Pull failed",
       );
       if (ok) await refresh();
@@ -227,10 +257,16 @@ export function use_git_panel() {
     const off_project = muxy.events.subscribe("project.switched", () => void switch_scope());
     const off_worktree = muxy.events.subscribe("worktree.switched", () => void switch_scope());
     const off_file = muxy.events.subscribe("file.changed", () => reconcile());
+    const off_busy = on_busy_change((busy) => {
+      if (busy || !pending_switch.current) return;
+      pending_switch.current = false;
+      void switch_scope();
+    });
     return () => {
       off_project?.();
       off_worktree?.();
       off_file?.();
+      off_busy();
       if (reconcile_timer.current) clearTimeout(reconcile_timer.current);
     };
   }, [initial_load, switch_scope, reconcile]);

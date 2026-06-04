@@ -1,7 +1,7 @@
 import { active_worktree_path } from "@/lib/git";
 
-export function checkout_pr(number: number): Promise<void> {
-  return muxy.git.pr.checkout({ number });
+export function checkout_pr(number: number, project?: string): Promise<void> {
+  return muxy.git.pr.checkout({ number, project });
 }
 
 export async function suggest_worktree_path(number: number): Promise<string> {
@@ -11,11 +11,11 @@ export async function suggest_worktree_path(number: number): Promise<string> {
   return parent ? `${parent}/${name}` : name;
 }
 
-export async function checkout_pr_worktree(number: number): Promise<string | null> {
+export async function checkout_pr_worktree(number: number, project?: string): Promise<string | null> {
   const suggested = await suggest_worktree_path(number);
   const path = await prompt_path(number, suggested);
   if (!path) return null;
-  const { branch } = await muxy.git.pr.checkoutWorktree({ number, path });
+  const { branch } = await muxy.git.pr.checkoutWorktree({ number, path, project });
   await muxy.worktrees.refresh().catch(() => undefined);
   await muxy.git.worktree.switchTo({ identifier: path }).catch(() => undefined);
   return branch;

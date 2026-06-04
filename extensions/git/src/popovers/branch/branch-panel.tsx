@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Check, GitBranch, Plus, Trash2 } from "lucide-react";
 import { list_branches } from "@/lib/git-branches";
 import { try_action, confirm_action } from "@/lib/git";
+import { run_pinned } from "@/lib/git-scope";
 import { cn } from "@/lib/utils";
 import {
   Command,
@@ -35,7 +36,12 @@ export function BranchPanel() {
 
   async function select(name: string, create: boolean) {
     const ok = await try_action(
-      () => (create ? muxy.git.branch.create({ name }) : muxy.git.branch.switchTo({ branch: name })),
+      () =>
+        run_pinned((project) =>
+          create
+            ? muxy.git.branch.create({ name, project })
+            : muxy.git.branch.switchTo({ branch: name, project }),
+        ),
       create ? "Could not create branch" : "Could not switch branch",
     );
     if (ok) void muxy.popover.close();
@@ -50,7 +56,7 @@ export function BranchPanel() {
     });
     if (!confirmed) return;
     const ok = await try_action(
-      () => muxy.git.branch.delete({ name, force: true }),
+      () => run_pinned((project) => muxy.git.branch.delete({ name, force: true, project })),
       "Could not delete branch",
     );
     if (ok) void reload();

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { GitPullRequest, Loader2, RefreshCw } from "lucide-react";
 import { alert_error, confirm_action } from "@/lib/git";
+import { run_pinned } from "@/lib/git-scope";
 import { close_pr } from "@/lib/git-prs";
 import { checkout_pr, checkout_pr_worktree } from "@/lib/pr-checkout";
 import { use_persistent_value } from "@/hooks/use-persistent-value";
@@ -56,7 +57,7 @@ export function PullRequestsPanel() {
       });
       if (!ok) return;
       try {
-        await checkout_pr(number);
+        await run_pinned((project) => checkout_pr(number, project));
         await muxy.worktrees.refresh().catch(() => undefined);
         await muxy.toast({ body: `Checked out PR #${number}`, variant: "success" });
       } catch (err) {
@@ -74,7 +75,7 @@ export function PullRequestsPanel() {
     });
     if (!ok) return;
     try {
-      const branch = await checkout_pr_worktree(number);
+      const branch = await run_pinned((project) => checkout_pr_worktree(number, project));
       if (branch) await muxy.toast({ body: `PR #${number} in worktree (${branch})`, variant: "success" });
     } catch (err) {
       await alert_error(`Could not create worktree for PR #${number}`, err);
@@ -90,7 +91,7 @@ export function PullRequestsPanel() {
       });
       if (!ok) return;
       try {
-        await close_pr(number);
+        await run_pinned((project) => close_pr(number, project));
         await load(false, true);
       } catch (err) {
         await alert_error(`Could not close PR #${number}`, err);
