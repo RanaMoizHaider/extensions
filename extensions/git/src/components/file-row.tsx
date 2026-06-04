@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { FileText, Minus, Plus } from "lucide-react";
+import { FileText, Minus, Plus, Undo2 } from "lucide-react";
 import { middle_truncate } from "@/lib/file-meta";
 import { ICON_SIZE, ICON_STROKE } from "@/lib/icons";
 import { cn } from "@/lib/utils";
@@ -15,6 +15,7 @@ interface FileRowProps {
   active?: boolean;
   staged?: boolean;
   onAction?: (path: string) => void;
+  onDiscard?: (path: string) => void;
   onOpen: (path: string) => void;
 }
 
@@ -34,6 +35,7 @@ export function FileRow({
   active,
   staged,
   onAction,
+  onDiscard,
   onOpen,
 }: FileRowProps) {
   const Action = staged ? Minus : Plus;
@@ -61,6 +63,20 @@ export function FileRow({
       >
         {middle_truncate(path)}
       </span>
+      {onDiscard && (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="hidden size-[18px] shrink-0 group-hover:flex"
+          title="Discard changes"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDiscard(path);
+          }}
+        >
+          <Undo2 size={ICON_SIZE.row} strokeWidth={ICON_STROKE} />
+        </Button>
+      )}
       {onAction && (
         <Button
           variant="ghost"

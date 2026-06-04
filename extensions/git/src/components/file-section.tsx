@@ -1,4 +1,4 @@
-import { ChevronDown, Minus, Plus } from "lucide-react";
+import { ChevronDown, Minus, Plus, Undo2 } from "lucide-react";
 import type { FileEntry } from "@/lib/git-status";
 import { use_persistent_toggle } from "@/hooks/use-persistent-toggle";
 import { ICON_SIZE, ICON_STROKE } from "@/lib/icons";
@@ -14,6 +14,8 @@ interface FileSectionProps {
   bulkLabel: string;
   onBulk: () => void;
   onAction: (path: string) => void;
+  onDiscard?: (path: string) => void;
+  onBulkDiscard?: () => void;
   onOpen: (path: string) => void;
 }
 
@@ -25,6 +27,8 @@ export function FileSection({
   bulkLabel,
   onBulk,
   onAction,
+  onDiscard,
+  onBulkDiscard,
   onOpen,
 }: FileSectionProps) {
   const [open, toggle] = use_persistent_toggle(id, true);
@@ -53,6 +57,17 @@ export function FileSection({
           {entries.length}
         </span>
         <div className="ml-auto flex items-center text-muted-foreground opacity-0 group-hover:opacity-100">
+          {onBulkDiscard && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="size-[18px]"
+              title="Discard all changes"
+              onClick={onBulkDiscard}
+            >
+              <Undo2 size={ICON_SIZE.row} strokeWidth={ICON_STROKE} />
+            </Button>
+          )}
           <Button variant="ghost" size="icon-sm" className="size-[18px]" title={bulkLabel} onClick={onBulk}>
             <Bulk size={ICON_SIZE.row} strokeWidth={ICON_STROKE} />
           </Button>
@@ -69,6 +84,7 @@ export function FileSection({
               removed={entry.removed}
               staged={staged}
               onAction={onAction}
+              onDiscard={onDiscard}
               onOpen={onOpen}
             />
           ))}

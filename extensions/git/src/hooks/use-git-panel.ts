@@ -113,6 +113,34 @@ export function use_git_panel() {
     [move_entry, reconcile, refresh],
   );
 
+  const discard = useCallback(
+    async (path: string) => {
+      const entry =
+        state.kind === "ready" ? state.status.unstaged.find((e) => e.path === path) : undefined;
+      const untracked = entry?.label === "?";
+      const ok = await try_action(
+        () =>
+          muxy.git.discard(untracked ? { untrackedPaths: [path] } : { paths: [path] }),
+        "Could not discard file",
+      );
+      await refresh();
+      return ok;
+    },
+    [state, refresh],
+  );
+
+  const discard_all = useCallback(async () => {
+    if (state.kind !== "ready") return false;
+    const paths = state.status.unstaged.filter((e) => e.label !== "?").map((e) => e.path);
+    const untrackedPaths = state.status.unstaged.filter((e) => e.label === "?").map((e) => e.path);
+    const ok = await try_action(
+      () => muxy.git.discard({ paths, untrackedPaths }),
+      "Could not discard changes",
+    );
+    await refresh();
+    return ok;
+  }, [state, refresh]);
+
   const stage_all = useCallback(async () => {
     const ok = await try_action(() => muxy.git.stage({ paths: [] }), "Could not stage changes");
     await refresh();
@@ -167,6 +195,8 @@ export function use_git_panel() {
     unstage,
     stage_all,
     unstage_all,
+    discard,
+    discard_all,
     commit,
     sync,
   };

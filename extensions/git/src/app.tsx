@@ -15,6 +15,8 @@ export function App() {
     unstage,
     stage_all,
     unstage_all,
+    discard,
+    discard_all,
     commit,
     sync,
   } = use_git_panel();
@@ -56,6 +58,8 @@ export function App() {
         unstage={unstage}
         stage_all={stage_all}
         unstage_all={unstage_all}
+        discard={discard}
+        discard_all={discard_all}
         commit={commit}
         sync={sync}
         create_pr={create}

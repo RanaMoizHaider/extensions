@@ -1,4 +1,4 @@
-import { open_diff } from "@/lib/git";
+import { open_diff, confirm_action } from "@/lib/git";
 import type { GitStatus } from "@/lib/git-status";
 import type { CreatePrInput } from "@/hooks/use-create-pr";
 import { CommitBox } from "@/components/commit-box";
@@ -15,6 +15,8 @@ interface SourceControlPanelProps {
   unstage: (path: string) => Promise<boolean>;
   stage_all: () => Promise<boolean>;
   unstage_all: () => Promise<boolean>;
+  discard: (path: string) => Promise<boolean>;
+  discard_all: () => Promise<boolean>;
   commit: (message: string) => Promise<boolean>;
   sync: (op: "push" | "pull") => Promise<boolean>;
   create_pr: (input: CreatePrInput) => Promise<boolean>;
@@ -26,6 +28,8 @@ export function SourceControlPanel({
   unstage,
   stage_all,
   unstage_all,
+  discard,
+  discard_all,
   commit,
   sync,
   create_pr,
@@ -34,6 +38,26 @@ export function SourceControlPanel({
   const [mode, set_mode] = use_persistent_value<PrimaryMode>("muxy.git.commitMode", "commit");
   const hasPr = !!status.pullRequest;
   const creating = mode === "pr" && !hasPr;
+
+  async function discard_one(path: string) {
+    const ok = await confirm_action({
+      title: "Discard changes",
+      message: `Are you sure you want to discard changes in ${path}? This cannot be undone.`,
+      confirmLabel: "Discard",
+      critical: true,
+    });
+    if (ok) void discard(path);
+  }
+
+  async function discard_changes() {
+    const ok = await confirm_action({
+      title: "Discard all changes",
+      message: `Are you sure you want to discard all ${status.unstaged.length} changes? This cannot be undone.`,
+      confirmLabel: "Discard All",
+      critical: true,
+    });
+    if (ok) void discard_all();
+  }
 
   return (
     <>
@@ -70,6 +94,8 @@ export function SourceControlPanel({
           bulkLabel="Stage all"
           onBulk={() => void stage_all()}
           onAction={(path) => void stage(path)}
+          onDiscard={(path) => void discard_one(path)}
+          onBulkDiscard={() => void discard_changes()}
           onOpen={open_diff}
         />
         {clean && <EmptyState>No changes.</EmptyState>}
