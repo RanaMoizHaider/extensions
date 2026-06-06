@@ -1,4 +1,4 @@
-import { h } from "@/lib/dom";
+import { cls, h } from "@/lib/dom";
 import { confirmAction, openUrl } from "@/lib/git";
 import { openPrDiff } from "@/lib/git";
 import { branchNameFromTitle, prState } from "@/lib/pr";
@@ -17,17 +17,28 @@ export function renderPrsTab(app, status) {
     return h("div", { class: "flex min-h-0 flex-1 flex-col" }, h("section", { class: "flex flex-col gap-2 border-b border-border p-2.5" }, pr ? renderCurrentPr(app, pr, status, dirty) : renderCreatePrForm(app, status)), renderPrList(app));
 }
 function renderCreatePrForm(app, status) {
-    const disabled = app.createForm.busy || app.createForm.title.trim() === "";
     let branchInput;
-    const title = textarea(app.createForm.title, status.defaultBranch ? `Pull request title (-> ${status.defaultBranch})` : "Pull request title", 1, (value) => updateCreateTitle(app, value, branchInput), "min-h-[32px]");
+    let submit;
+    const isDisabled = () => app.createForm.busy || app.createForm.title.trim() === "";
+    const sync = () => {
+        const disabled = isDisabled();
+        submit.disabled = disabled;
+        submit.className = cls(SUBMIT_CLASS, disabled
+            ? "bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground"
+            : "bg-primary text-primary-foreground hover:opacity-95");
+    };
+    const title = textarea(app.createForm.title, status.defaultBranch ? `Pull request title (-> ${status.defaultBranch})` : "Pull request title", 1, (value) => {
+        updateCreateTitle(app, value, branchInput);
+        sync();
+    }, "min-h-[32px]", "pr-title");
     const body = textarea(app.createForm.body, "Summary (optional)", 2, (value) => {
         app.createForm.body = value;
-    }, "min-h-[48px]");
+    }, "min-h-[48px]", "pr-body");
     const advanced = app.createForm.advanced
         ? h("div", { class: "flex flex-col gap-2" }, (branchInput = input(app.createForm.newBranch, "New branch name (optional)", (value) => {
             app.createForm.branchEdited = true;
             app.createForm.newBranch = value;
-        }, "font-mono")), h("label", { class: "flex items-center gap-2 text-[11px] text-muted-foreground" }, h("input", {
+        }, "font-mono", "pr-branch")), h("label", { class: "flex items-center gap-2 text-[11px] text-muted-foreground" }, h("input", {
             type: "checkbox",
             checked: app.createForm.draft,
             class: "accent-primary",
@@ -36,6 +47,13 @@ function renderCreatePrForm(app, status) {
             },
         }), "Create as draft"))
         : null;
+    submit = button("Create pull request", {
+        iconName: "pr",
+        loading: app.createForm.busy,
+        variant: isDisabled() ? "secondary" : "default",
+        disabled: isDisabled(),
+        onClick: () => void submitCreate(app, status),
+    });
     return h("div", { class: "flex flex-col gap-2" }, title, body, h("button", {
         type: "button",
         class: "flex items-center gap-1 self-start text-[11px] text-muted-foreground outline-none hover:text-foreground",
@@ -46,14 +64,9 @@ function renderCreatePrForm(app, status) {
             }
             app.render();
         },
-    }, icon(app.createForm.advanced ? "chevronDown" : "chevronRight", 12, "", 2), "Advanced"), advanced, button("Create pull request", {
-        iconName: "pr",
-        loading: app.createForm.busy,
-        variant: disabled ? "secondary" : "default",
-        disabled,
-        onClick: () => void submitCreate(app, status),
-    }));
+    }, icon(app.createForm.advanced ? "chevronDown" : "chevronRight", 12, "", 2), "Advanced"), advanced, submit);
 }
+const SUBMIT_CLASS = "flex h-7 items-center justify-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium outline-none transition-colors disabled:pointer-events-none disabled:opacity-50";
 async function submitCreate(app, status) {
     if (app.createForm.busy || app.createForm.title.trim() === "")
         return;
@@ -77,7 +90,7 @@ function renderCurrentPr(app, pr, status, dirty) {
     const target = { branch: status.branch, defaultBranch: status.defaultBranch, dirty };
     const state = prState(pr);
     const busy = app.prPending !== null;
-    return h("div", { class: "flex flex-col gap-2" }, h("div", { class: "flex items-center gap-1.5" }, prStateIcon(pr, 13), h("span", { class: "font-mono text-[12px] font-semibold text-foreground" }, `#${pr.number}`), h("span", { class: "text-[11px] text-muted-foreground" }, stateLabel(pr)), h("div", { class: "ml-auto flex items-center gap-0.5" }, iconButton("Close PR", "xCircle", () => void confirmCloseCurrent(app, pr.number), "", busy || state !== "open", "danger"), iconButton("Clean up branch", "trash", () => void confirmCleanupCurrent(app, target), "", busy || !status.branch), iconButton("View on GitHub", "external", () => openUrl(pr.url)))), infoRow("Base", pr.baseBranch), infoRow("Mergeable", mergeableLabel(pr), mergeableTone(pr)), checksRow(pr.checks), renderMergeActions(app, pr, target));
+    return h("div", { class: "flex flex-col gap-2" }, h("div", { class: "flex items-center gap-1.5" }, prStateIcon(pr, 13), h("span", { class: "font-mono text-[12px] font-semibold text-foreground" }, `#${pr.number}`), h("span", { class: "text-[11px] text-muted-foreground" }, stateLabel(pr)), h("div", { class: "ml-auto flex items-center gap-0.5" }, iconButton("Refresh PR", "refresh", () => void app.refreshCurrentPr(), "", busy || app.prRefreshing), iconButton("Close PR", "xCircle", () => void confirmCloseCurrent(app, pr.number), "", busy || state !== "open", "danger"), iconButton("Clean up branch", "trash", () => void confirmCleanupCurrent(app, target), "", busy || !status.branch), iconButton("View on GitHub", "external", () => openUrl(pr.url)))), infoRow("Base", pr.baseBranch), infoRow("Mergeable", mergeableLabel(pr), mergeableTone(pr)), checksRow(pr.checks), renderMergeActions(app, pr, target));
 }
 function renderMergeActions(app, pr, target) {
     const state = prState(pr);
