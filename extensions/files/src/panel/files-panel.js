@@ -17,6 +17,7 @@ import {
   rename_fs,
 } from "@/lib/file-ops";
 import { cls, h, icon_svg } from "@/lib/dom";
+import { invalidate_quick_find, open_quick_find, prewarm_quick_find } from "@/lib/quick-open";
 
 const RECONCILE_DEBOUNCE_MS = 250;
 
@@ -147,16 +148,27 @@ export class FilesPanelApp {
 
     document.addEventListener("contextmenu", this.preventNativeContextMenu);
     this.disposers.push(
-      muxy.events.subscribe("worktree.switched", () => void this.loadRoot()),
-      muxy.events.subscribe("project.switched", () => void this.loadRoot()),
-      muxy.events.subscribe("file.changed", (payload) => this.scheduleReconcile(payload)),
+      muxy.events.subscribe("worktree.switched", () => {
+        invalidate_quick_find();
+        void this.loadRoot();
+      }),
+      muxy.events.subscribe("project.switched", () => {
+        invalidate_quick_find();
+        void this.loadRoot();
+      }),
+      muxy.events.subscribe("file.changed", (payload) => {
+        invalidate_quick_find();
+        this.scheduleReconcile(payload);
+      }),
       muxy.events.subscribe("command.files-new-file", () => void this.createFile("")),
       muxy.events.subscribe("command.files-new-folder", () => void this.createFolder("")),
       muxy.events.subscribe("command.files-refresh", () => void this.loadRoot()),
+      muxy.events.subscribe("command.files-quick-open", () => void open_quick_find()),
       () => document.removeEventListener("contextmenu", this.preventNativeContextMenu),
     );
 
     void this.loadRoot();
+    prewarm_quick_find();
   }
 
   preventNativeContextMenu = (event) => {

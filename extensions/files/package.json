@@ -69,6 +69,15 @@
           "kind": "togglePanel",
           "panel": "files"
         }
+      },
+      {
+        "id": "files-quick-open",
+        "title": "Files: Go to File…",
+        "subtitle": "Fuzzy-find a file in the workspace",
+        "defaultShortcut": "cmd+p",
+        "action": {
+          "kind": "event"
+        }
       }
     ],
     "topbarItems": [
