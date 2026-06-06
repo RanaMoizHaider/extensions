@@ -8,3 +8,4 @@ minisign.key
 *.key
 *.log
 extensions/demo-*
+.claude/
