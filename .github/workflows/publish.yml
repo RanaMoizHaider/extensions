@@ -110,11 +110,14 @@ jobs:
         if: steps.changed.outputs.names != ''
         run: sudo apt-get update && sudo apt-get install -y minisign
 
-      - name: Pack, sign, and upload
+      - name: Pack, sign, upload, and announce
         if: steps.changed.outputs.names != ''
         env:
           NAMES: ${{ steps.changed.outputs.names }}
           MUXY_UPLOAD_URL: https://muxy.app/api/extensions/upload
           MUXY_UPLOAD_TOKEN: ${{ secrets.MUXY_UPLOAD_TOKEN }}
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          # Optional: when set, each successful upload posts a one-line release
+          # note to Discord. Unset = no announcement (publish still succeeds).
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: node scripts/publish.mjs $NAMES

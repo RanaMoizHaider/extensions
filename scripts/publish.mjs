@@ -12,9 +12,40 @@ const TOKEN = process.env.MUXY_UPLOAD_TOKEN;
 const SECRET_KEY = process.env.MINISIGN_SECRET_KEY;
 const DRY_RUN = process.argv.includes("--dry-run");
 
+// Optional release announcement. When DISCORD_WEBHOOK_URL is set, each
+// successful upload posts a one-line "<name> <version> is published." to the
+// channel, with the name linking to the store page. Unset = silently skipped.
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
+// Store base; an extension's page is `${STORE_BASE_URL}/<name>`.
+const STORE_BASE_URL = (process.env.MUXY_STORE_URL || "https://muxy.app/store").replace(/\/+$/, "");
+
 function fail(message) {
   console.error(`::error::${message}`);
   process.exit(1);
+}
+
+// Announce a publish to Discord. Best-effort: publishing has already succeeded
+// and the artifact is live, so a webhook failure must never fail the run — it
+// only warns. SUPPRESS_EMBEDS (flag 1<<2) keeps it to a single clean line with
+// no link-preview card.
+async function postDiscordRelease(name, version) {
+  if (!DISCORD_WEBHOOK_URL) return;
+  const content = `[${name}](${STORE_BASE_URL}/${encodeURIComponent(name)}) ${version} is published.`;
+  try {
+    const response = await fetch(DISCORD_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content, flags: 4, allowed_mentions: { parse: [] } }),
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      console.log(`::warning::Discord announce for ${name}@${version} failed: HTTP ${response.status} ${body}`);
+      return;
+    }
+    console.log(`✓ announced ${name}@${version} to Discord`);
+  } catch (err) {
+    console.log(`::warning::Discord announce for ${name}@${version} errored: ${err.message}`);
+  }
 }
 
 function signBytes(bytes) {
@@ -140,6 +171,9 @@ async function uploadExtension(name) {
   console.log(
     `✓ uploaded ${name}@${packed.version} (sha256=${packed.sha256}) + ${assets.length} listing asset(s), metadata signed`,
   );
+
+  // Announce only after a confirmed upload, so the store link is live.
+  await postDiscordRelease(name, packed.version);
 }
 
 async function main() {
