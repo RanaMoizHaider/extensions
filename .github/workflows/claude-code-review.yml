@@ -3,15 +3,80 @@ name: Claude Code Review
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
+  issue_comment:
+    types: [created]
 
-# Serialise per-PR so rapid pushes don't race the delete-then-post step and
-# leave duplicate comments; only the latest push's review matters.
 concurrency:
-  group: claude-review-${{ github.event.pull_request.number }}
+  group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: true
 
+env:
+  TRIGGER_PHRASE: /claude-review
+
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      should_run: ${{ steps.decide.outputs.should_run }}
+      pr_number: ${{ steps.decide.outputs.pr_number }}
+    steps:
+      - name: Decide whether to run
+        id: decide
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const event = context.eventName;
+
+            if (event === "pull_request") {
+              const pr = context.payload.pull_request;
+              const isFork = pr.head.repo.full_name !== pr.base.repo.full_name;
+              if (isFork) {
+                core.info("Fork PR via pull_request event: secrets unavailable here. " +
+                  "A maintainer can run the review by commenting the trigger phrase.");
+                core.setOutput("should_run", "false");
+                return;
+              }
+              core.setOutput("should_run", "true");
+              core.setOutput("pr_number", String(pr.number));
+              return;
+            }
+
+            const issue = context.payload.issue;
+            const comment = context.payload.comment;
+            if (!issue?.pull_request) {
+              core.info("Comment is not on a pull request; ignoring.");
+              core.setOutput("should_run", "false");
+              return;
+            }
+            const phrase = process.env.TRIGGER_PHRASE;
+            if (!comment?.body?.includes(phrase)) {
+              core.info(`Comment does not contain "${phrase}"; ignoring.`);
+              core.setOutput("should_run", "false");
+              return;
+            }
+
+            const { owner, repo } = context.repo;
+            const actor = comment.user.login;
+            const { data: perm } =
+              await github.rest.repos.getCollaboratorPermissionLevel({
+                owner, repo, username: actor,
+              });
+            const allowed = perm.permission === "write" || perm.permission === "admin";
+            if (!allowed) {
+              core.info(`@${actor} has "${perm.permission}" access (need write/admin); ignoring.`);
+              core.setOutput("should_run", "false");
+              return;
+            }
+
+            core.info(`Triggered by @${actor} (${perm.permission}) on PR #${issue.number}.`);
+            core.setOutput("should_run", "true");
+            core.setOutput("pr_number", String(issue.number));
+
   claude-review:
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -20,15 +85,24 @@ jobs:
       id-token: write
 
     steps:
+      - name: React to trigger comment
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: "eyes",
+            });
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', needs.gate.outputs.pr_number) || '' }}
 
-      # Claude only ANALYSES here: it reads the diff/files and writes its review to
-      # claude-review.md. It is given read-only `gh` (diff/view) and the Write tool,
-      # so it cannot post or push anything itself — posting is handled deterministically
-      # in the next step so we never pile up duplicate comments.
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@v1
@@ -38,12 +112,12 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
-            Review this Muxy extension PR: ${{ github.repository }}/pull/${{ github.event.pull_request.number }}
+            Review this Muxy extension PR: ${{ github.repository }}/pull/${{ needs.gate.outputs.pr_number }}
 
             Muxy extensions are npm + Vite projects. The manifest is the "muxy" key in
             package.json; source lives in src/ and builds to dist/. Read the extension's
             package.json and the muxy-extension skill guidance before judging. Use
-            `gh pr diff ${{ github.event.pull_request.number }} --repo ${{ github.repository }}`
+            `gh pr diff ${{ needs.gate.outputs.pr_number }} --repo ${{ github.repository }}`
             to see what changed.
 
             Evaluate ONLY these checks, each as a single pass/fail line:
@@ -81,9 +155,6 @@ jobs:
             should fit in a few lines.
           claude_args: '--allowed-tools "Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep,Write"'
 
-      # Deterministic post: delete our own previous review comment(s), then post the
-      # freshly written review so the latest one always lands at the bottom. Runs even
-      # if the review step reports failure, as long as a review file was produced.
       - name: Replace previous review comment
         if: always()
         uses: actions/github-script@v7
@@ -104,7 +175,7 @@ jobs:
             }
 
             const { owner, repo } = context.repo;
-            const issue_number = context.payload.pull_request.number;
+            const issue_number = Number("${{ needs.gate.outputs.pr_number }}");
 
             const comments = await github.paginate(
               github.rest.issues.listComments,
