@@ -1,9 +1,20 @@
-import { bracketMatching, indentUnit } from "@codemirror/language";
+import { bracketMatching, codeFolding, foldGutter, foldKeymap, indentOnInput, indentUnit } from "@codemirror/language";
+import {
+  acceptCompletion,
+  autocompletion,
+  closeBrackets,
+  closeBracketsKeymap,
+  completeAnyWord,
+  completionKeymap,
+  completionStatus,
+} from "@codemirror/autocomplete";
+import { lintGutter, lintKeymap } from "@codemirror/lint";
 import {
   closeSearchPanel,
   findNext,
   findPrevious,
   getSearchQuery,
+  gotoLine,
   openSearchPanel as openCodeMirrorSearchPanel,
   replaceAll,
   replaceNext,
@@ -13,7 +24,7 @@ import {
   selectMatches,
   setSearchQuery,
 } from "@codemirror/search";
-import { Compartment, EditorState, Prec } from "@codemirror/state";
+import { Compartment, EditorSelection, EditorState, Prec } from "@codemirror/state";
 import {
   drawSelection,
   dropCursor,
@@ -26,11 +37,15 @@ import {
   rectangularSelection,
   runScopeHandlers,
 } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { h, icon_svg } from "@/lib/dom";
+import { defaultKeymap, history, historyKeymap, indentLess, indentMore } from "@codemirror/commands";
+import { cls, h, icon_svg } from "@/lib/dom";
 import { muxy_cm_theme } from "@/lib/editor-theme";
 import { muxy_highlight_style } from "@/lib/syntax-theme";
 import { language_for } from "@/lib/languages";
+import { linter_for } from "@/lib/linters";
+import { read_cursor_state, write_cursor_state } from "@/lib/cursor-state";
+import { gitGutterExtension, setGitBaseline } from "@/editor/git-gutter";
+import { head_baseline } from "@/lib/git-baseline";
 
 const replacePanelMode = new WeakMap();
 
@@ -53,6 +68,16 @@ function closeIcon() {
     { d: "M6 6l12 12" },
     { d: "M18 6L6 18" },
   ]);
+}
+
+// Chevron used in the fold gutter: points down when the section is open
+// (click to fold), right when folded (click to unfold).
+function foldMarker(open) {
+  const svg = icon_svg([{ d: "M6 9l6 6 6-6" }]);
+  const wrap = h("span", { class: cls("cm-fold-marker", !open && "cm-fold-marker-closed") }, svg);
+  wrap.setAttribute("title", open ? "Fold" : "Unfold");
+  wrap.setAttribute("aria-hidden", "true");
+  return wrap;
 }
 
 class FindPanel {
@@ -230,28 +255,49 @@ export class CodeEditor {
     this.onDirty = onDirty;
     this.onSave = onSave;
     this.destroyed = false;
+    this.cursorSaveTimer = 0;
     this.languageLoadId = 0;
     this.languageCompartment = new Compartment();
+    this.lintCompartment = new Compartment();
     this.configCompartment = new Compartment();
 
     this.container = h("div", { class: "editor-host" });
     this.parent.replaceChildren(this.container);
 
+    const saved = read_cursor_state(filePath);
+    // Clamp the saved selection to the current doc — the file may have shrunk on
+    // disk since we last saw it.
+    const selection =
+      saved && saved.anchor <= value.length && saved.head <= value.length
+        ? { anchor: saved.anchor, head: saved.head }
+        : undefined;
+    this.savedScrollTop = saved?.scrollTop ?? 0;
+
     this.view = new EditorView({
       parent: this.container,
       state: EditorState.create({
         doc: value,
+        selection,
         extensions: [
           this.configCompartment.of(this.configExtensions(config, isDark)),
           this.languageCompartment.of([]),
+          this.lintCompartment.of([]),
+          gitGutterExtension(),
           EditorView.updateListener.of((update) => {
-            if (!update.docChanged) return;
-            this.value = update.state.doc.toString();
-            this.onDirty();
+            if (update.docChanged) {
+              this.value = update.state.doc.toString();
+              this.onDirty();
+            }
+            if (update.docChanged || update.selectionSet) this.scheduleCursorSave();
+          }),
+          EditorView.domEventHandlers({
+            scroll: () => this.scheduleCursorSave(),
           }),
         ],
       }),
     });
+
+    this.restoreScroll();
 
     this.keyHandler = (event) => {
       if (!(event.metaKey || event.ctrlKey) || event.shiftKey) return;
@@ -266,6 +312,48 @@ export class CodeEditor {
     };
     window.addEventListener("keydown", this.keyHandler, true);
     this.loadLanguage(filePath);
+    this.loadLinter();
+    this.loadGitBaseline(filePath);
+    this.gitBaselineDisposer = muxy.events.subscribe("file.changed", () => this.loadGitBaseline(filePath));
+  }
+
+  async loadGitBaseline(filePath) {
+    const baseline = await head_baseline(filePath);
+    if (this.destroyed || !this.view) return;
+    this.view.dispatch({ effects: setGitBaseline.of(baseline) });
+  }
+
+  // Restore the saved scroll position once the view has laid out. requestMeasure
+  // runs after the initial render so scrollDOM has its real scrollHeight.
+  restoreScroll() {
+    if (!this.savedScrollTop || !this.view) return;
+    this.view.requestMeasure({
+      read: () => {},
+      write: () => {
+        if (this.view) this.view.scrollDOM.scrollTop = this.savedScrollTop;
+      },
+    });
+  }
+
+  // Debounce cursor/scroll writes so rapid typing or scrolling doesn't hammer
+  // localStorage — we only need the latest position.
+  scheduleCursorSave() {
+    if (this.destroyed) return;
+    if (this.cursorSaveTimer) return;
+    this.cursorSaveTimer = window.setTimeout(() => {
+      this.cursorSaveTimer = 0;
+      this.saveCursorState();
+    }, 400);
+  }
+
+  saveCursorState() {
+    if (!this.view) return;
+    const { anchor, head } = this.view.state.selection.main;
+    write_cursor_state(this.filePath, {
+      anchor,
+      head,
+      scrollTop: this.view.scrollDOM.scrollTop,
+    });
   }
 
   configExtensions(config, isDark) {
@@ -296,6 +384,14 @@ export class CodeEditor {
               return true;
             },
           },
+          // Go to line. searchKeymap already binds this to Mod-Alt-g (and keeps
+          // Mod-g as find-next, the macOS convention); we re-bind at highest
+          // precedence so it can't be shadowed and works even when find is open.
+          {
+            key: "Mod-Alt-g",
+            preventDefault: true,
+            run: gotoLine,
+          },
         ]),
       ),
       history(),
@@ -307,8 +403,9 @@ export class CodeEditor {
       rectangularSelection(),
       EditorState.allowMultipleSelections.of(true),
       bracketMatching(),
+      closeBrackets(),
+      indentOnInput(),
       search({ top: true, createPanel: (view) => new FindPanel(view) }),
-      keymap.of([...searchKeymap, ...historyKeymap, ...defaultKeymap]),
       muxy_cm_theme(isDark),
       muxy_highlight_style(),
       EditorView.theme({
@@ -320,9 +417,70 @@ export class CodeEditor {
       EditorState.tabSize.of(config.tabSize),
     ];
 
+    const keymaps = [...closeBracketsKeymap, ...searchKeymap, ...historyKeymap];
+
+    if (config.autocomplete !== false) {
+      extensions.push(
+        autocompletion({ defaultKeymap: false, icons: false, activateOnTyping: true }),
+        // Document-word completion as a baseline for every language (and for
+        // plain text / grammars with no completion source of their own). The
+        // active language's source — keywords, scope identifiers, CSS props,
+        // etc. — is merged on top and ranks above these via its own boost.
+        EditorState.languageData.of(() => [{ autocomplete: completeAnyWord }]),
+      );
+      keymaps.push(...completionKeymap);
+    }
+    if (config.codeFolding !== false) {
+      extensions.push(codeFolding(), foldGutter({ markerDOM: (open) => foldMarker(open) }));
+      keymaps.push(...foldKeymap);
+    }
+    if (config.linting !== false) keymaps.push(...lintKeymap);
+
+    // Tab behavior. CodeMirror leaves Tab unbound by default so it can move
+    // focus out of the editor (an a11y choice); we opt in:
+    //   - autocomplete popup open  -> accept the highlighted suggestion
+    //   - non-empty selection      -> indent the selected block (indentMore)
+    //   - cursor only              -> insert spaces to the next tab stop
+    // Shift-Tab dedents the line/selection.
+    keymaps.push({
+      key: "Tab",
+      preventDefault: true,
+      run: (view) => {
+        if (config.autocomplete !== false && completionStatus(view.state) === "active") {
+          return acceptCompletion(view);
+        }
+        if (view.state.selection.ranges.some((range) => !range.empty)) {
+          return indentMore(view);
+        }
+        return this.insertIndentAtCursor(view);
+      },
+      shift: indentLess,
+    });
+
+    keymaps.push(...defaultKeymap);
+    extensions.push(keymap.of(keymaps));
+
     if (config.lineNumbers) extensions.push(lineNumbers());
     if (config.wordWrap) extensions.push(EditorView.lineWrapping);
     return extensions;
+  }
+
+  // Insert spaces at each cursor up to the next tab stop, so Tab aligns to
+  // columns (e.g. at column 2 with tabSize 4 it inserts 2 spaces, not 4) instead
+  // of indenting the whole line the way indentMore would.
+  insertIndentAtCursor(view) {
+    const tabSize = view.state.tabSize;
+    const changes = view.state.changeByRange((range) => {
+      const col = range.head - view.state.doc.lineAt(range.head).from;
+      const count = tabSize - (col % tabSize);
+      const insert = " ".repeat(count);
+      return {
+        changes: { from: range.from, insert },
+        range: EditorSelection.cursor(range.from + count),
+      };
+    });
+    view.dispatch(view.state.update(changes, { scrollIntoView: true, userEvent: "input" }));
+    return true;
   }
 
   async loadLanguage(filePath) {
@@ -334,17 +492,37 @@ export class CodeEditor {
     });
   }
 
+  lintExtension() {
+    if (this.config.linting === false) return [];
+    const lint = linter_for(this.filePath);
+    return lint ? [lint, lintGutter()] : [];
+  }
+
+  loadLinter() {
+    if (this.destroyed || !this.view) return;
+    this.view.dispatch({
+      effects: this.lintCompartment.reconfigure(this.lintExtension()),
+    });
+  }
+
   updateConfig(config, isDark) {
     this.config = config;
     this.isDark = isDark;
     if (!this.view) return;
     this.view.dispatch({
-      effects: this.configCompartment.reconfigure(this.configExtensions(config, isDark)),
+      effects: [
+        this.configCompartment.reconfigure(this.configExtensions(config, isDark)),
+        this.lintCompartment.reconfigure(this.lintExtension()),
+      ],
     });
   }
 
   getValue() {
     return this.value;
+  }
+
+  focus() {
+    this.view?.focus();
   }
 
   openSearch() {
@@ -372,7 +550,16 @@ export class CodeEditor {
   }
 
   destroy() {
+    if (this.cursorSaveTimer) {
+      window.clearTimeout(this.cursorSaveTimer);
+      this.cursorSaveTimer = 0;
+    }
+    // Flush the final position while the view still exists — destroy() fires on
+    // every reopen / markdown mode switch, so this is the main save point.
+    if (this.view) this.saveCursorState();
     this.destroyed = true;
+    this.gitBaselineDisposer?.();
+    this.gitBaselineDisposer = null;
     window.removeEventListener("keydown", this.keyHandler, true);
     this.view?.destroy();
     this.view = null;

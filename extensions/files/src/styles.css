@@ -170,6 +170,37 @@ textarea {
   color: var(--muxy-foreground-muted);
 }
 
+.file-tree-git-modified {
+  --file-tree-git-color: var(--muxy-accent);
+}
+
+.file-tree-git-added {
+  --file-tree-git-color: var(--muxy-diff-add);
+}
+
+.file-tree-git-deleted {
+  --file-tree-git-color: var(--muxy-diff-remove);
+}
+
+.file-tree-git-modified .file-tree-name,
+.file-tree-git-added .file-tree-name,
+.file-tree-git-deleted .file-tree-name {
+  color: var(--file-tree-git-color);
+}
+
+.file-tree-row-git-folder .file-tree-name {
+  color: var(--file-tree-git-color);
+}
+
+.file-tree-git-mark {
+  flex: 0 0 auto;
+  width: var(--s6);
+  margin-left: var(--s1);
+  color: var(--file-tree-git-color);
+  font: 600 var(--font-footnote) "SF Mono", Menlo, monospace;
+  text-align: center;
+}
+
 .file-tree-indent {
   flex: 0 0 auto;
   height: 1px;
@@ -238,6 +269,38 @@ textarea {
   color: var(--muxy-foreground-muted);
   font-size: var(--font-body);
   text-align: center;
+}
+
+.file-tree-filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s4);
+  padding: var(--s2) var(--s5);
+  border-bottom: 1px solid var(--muxy-border);
+  background: var(--muxy-surface);
+}
+
+.file-tree-filter-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s3);
+  color: var(--muxy-foreground-muted);
+  font-size: var(--font-footnote);
+}
+
+.file-tree-filter-clear {
+  padding: var(--s1) var(--s3);
+  border: 0;
+  border-radius: var(--s2);
+  background: transparent;
+  color: var(--muxy-accent);
+  font-size: var(--font-footnote);
+  cursor: pointer;
+}
+
+.file-tree-filter-clear:hover {
+  background: var(--muxy-hover);
 }
 
 .ctx-menu {
