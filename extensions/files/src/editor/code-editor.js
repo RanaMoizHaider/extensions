@@ -7,6 +7,7 @@ import {
   completeAnyWord,
   completionKeymap,
   completionStatus,
+  startCompletion,
 } from "@codemirror/autocomplete";
 import { lintGutter, lintKeymap } from "@codemirror/lint";
 import {
@@ -45,6 +46,7 @@ import { language_for } from "@/lib/languages";
 import { linter_for } from "@/lib/linters";
 import { read_cursor_state, write_cursor_state } from "@/lib/cursor-state";
 import { gitGutterExtension, setGitBaseline } from "@/editor/git-gutter";
+import { colorSwatchExtension } from "@/editor/color-swatch";
 import { head_baseline } from "@/lib/git-baseline";
 
 const replacePanelMode = new WeakMap();
@@ -70,14 +72,37 @@ function closeIcon() {
   ]);
 }
 
-// Chevron used in the fold gutter: points down when the section is open
-// (click to fold), right when folded (click to unfold).
 function foldMarker(open) {
   const svg = icon_svg([{ d: "M6 9l6 6 6-6" }]);
   const wrap = h("span", { class: cls("cm-fold-marker", !open && "cm-fold-marker-closed") }, svg);
   wrap.setAttribute("title", open ? "Fold" : "Unfold");
   wrap.setAttribute("aria-hidden", "true");
   return wrap;
+}
+
+function lineSelectionStyle() {
+  return EditorView.mouseSelectionStyle.of((view, startEvent) => {
+    if (startEvent.detail < 3 || startEvent.button !== 0) return null;
+    const startPos = view.posAtCoords({ x: startEvent.clientX, y: startEvent.clientY });
+    if (startPos == null) return null;
+    const anchorLine = view.state.doc.lineAt(startPos);
+
+    const selectionFor = (event) => {
+      const doc = view.state.doc;
+      const pos = view.posAtCoords({ x: event.clientX, y: event.clientY }, false);
+      const headLine = doc.lineAt(pos);
+      const from = Math.min(anchorLine.from, headLine.from);
+      const to = Math.max(anchorLine.to, headLine.to);
+      return headLine.number < anchorLine.number
+        ? EditorSelection.range(to, from, undefined, undefined, 1)
+        : EditorSelection.range(from, to, undefined, undefined, -1);
+    };
+
+    return {
+      get: (curEvent) => selectionFor(curEvent),
+      update: () => {},
+    };
+  });
 }
 
 class FindPanel {
@@ -265,8 +290,6 @@ export class CodeEditor {
     this.parent.replaceChildren(this.container);
 
     const saved = read_cursor_state(filePath);
-    // Clamp the saved selection to the current doc — the file may have shrunk on
-    // disk since we last saw it.
     const selection =
       saved && saved.anchor <= value.length && saved.head <= value.length
         ? { anchor: saved.anchor, head: saved.head }
@@ -323,8 +346,6 @@ export class CodeEditor {
     this.view.dispatch({ effects: setGitBaseline.of(baseline) });
   }
 
-  // Restore the saved scroll position once the view has laid out. requestMeasure
-  // runs after the initial render so scrollDOM has its real scrollHeight.
   restoreScroll() {
     if (!this.savedScrollTop || !this.view) return;
     this.view.requestMeasure({
@@ -335,8 +356,6 @@ export class CodeEditor {
     });
   }
 
-  // Debounce cursor/scroll writes so rapid typing or scrolling doesn't hammer
-  // localStorage — we only need the latest position.
   scheduleCursorSave() {
     if (this.destroyed) return;
     if (this.cursorSaveTimer) return;
@@ -384,9 +403,6 @@ export class CodeEditor {
               return true;
             },
           },
-          // Go to line. searchKeymap already binds this to Mod-Alt-g (and keeps
-          // Mod-g as find-next, the macOS convention); we re-bind at highest
-          // precedence so it can't be shadowed and works even when find is open.
           {
             key: "Mod-Alt-g",
             preventDefault: true,
@@ -396,23 +412,7 @@ export class CodeEditor {
       ),
       history(),
       drawSelection(),
-      // Triple-click selects the line content only, excluding the trailing
-      // newline. CodeMirror's default extends the selection to the start of
-      // the next line, which makes drawSelection paint a sliver on the row
-      // below so the next line appears (but isn't) selected.
-      EditorView.domEventHandlers({
-        mousedown(event, view) {
-          if (event.detail < 3 || event.button !== 0) return false;
-          const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
-          if (pos == null) return false;
-          const line = view.state.doc.lineAt(pos);
-          view.dispatch({
-            selection: EditorSelection.range(line.from, line.to),
-          });
-          event.preventDefault();
-          return true;
-        },
-      }),
+      lineSelectionStyle(),
       dropCursor(),
       highlightSpecialChars(),
       highlightActiveLine(),
@@ -438,14 +438,11 @@ export class CodeEditor {
 
     if (config.autocomplete !== false) {
       extensions.push(
-        autocompletion({ defaultKeymap: false, icons: false, activateOnTyping: true }),
-        // Document-word completion as a baseline for every language (and for
-        // plain text / grammars with no completion source of their own). The
-        // active language's source — keywords, scope identifiers, CSS props,
-        // etc. — is merged on top and ranks above these via its own boost.
+        autocompletion({ defaultKeymap: false, icons: false, activateOnTyping: false }),
         EditorState.languageData.of(() => [{ autocomplete: completeAnyWord }]),
       );
       keymaps.push(...completionKeymap);
+      keymaps.push({ key: "Ctrl-Space", preventDefault: true, run: startCompletion });
     }
     if (config.codeFolding !== false) {
       extensions.push(codeFolding(), foldGutter({ markerDOM: (open) => foldMarker(open) }));
@@ -453,12 +450,6 @@ export class CodeEditor {
     }
     if (config.linting !== false) keymaps.push(...lintKeymap);
 
-    // Tab behavior. CodeMirror leaves Tab unbound by default so it can move
-    // focus out of the editor (an a11y choice); we opt in:
-    //   - autocomplete popup open  -> accept the highlighted suggestion
-    //   - non-empty selection      -> indent the selected block (indentMore)
-    //   - cursor only              -> insert spaces to the next tab stop
-    // Shift-Tab dedents the line/selection.
     keymaps.push({
       key: "Tab",
       preventDefault: true,
@@ -479,12 +470,10 @@ export class CodeEditor {
 
     if (config.lineNumbers) extensions.push(lineNumbers());
     if (config.wordWrap) extensions.push(EditorView.lineWrapping);
+    if (config.colorPreview !== false) extensions.push(colorSwatchExtension());
     return extensions;
   }
 
-  // Insert spaces at each cursor up to the next tab stop, so Tab aligns to
-  // columns (e.g. at column 2 with tabSize 4 it inserts 2 spaces, not 4) instead
-  // of indenting the whole line the way indentMore would.
   insertIndentAtCursor(view) {
     const tabSize = view.state.tabSize;
     const changes = view.state.changeByRange((range) => {
@@ -571,8 +560,6 @@ export class CodeEditor {
       window.clearTimeout(this.cursorSaveTimer);
       this.cursorSaveTimer = 0;
     }
-    // Flush the final position while the view still exists — destroy() fires on
-    // every reopen / markdown mode switch, so this is the main save point.
     if (this.view) this.saveCursorState();
     this.destroyed = true;
     this.gitBaselineDisposer?.();
