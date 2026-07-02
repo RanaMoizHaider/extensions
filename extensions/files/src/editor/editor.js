@@ -48,6 +48,7 @@ export class EditorApp {
     this.editorStateId = create_editor_state_id();
     this.disposers = [];
     this.fileLoadId = 0;
+    this.pendingPosition = null;
     this.shell = null;
     this.shellFilePath = null;
     this.bodyKey = null;
@@ -207,6 +208,7 @@ export class EditorApp {
 
   async loadTarget() {
     const filePath = this.filePath;
+    this.pendingPosition = this.positionFromData();
     this.updateTabChrome();
 
     // Switching/reloading the target supersedes any pending external-change work.
@@ -724,7 +726,7 @@ export class EditorApp {
     this.focusEditor();
   }
 
-  initialPosition() {
+  positionFromData() {
     const line = Number(this.data.line);
     if (!Number.isInteger(line) || line < 1) return null;
     const column = Number(this.data.column);
@@ -732,6 +734,12 @@ export class EditorApp {
       line,
       column: Number.isInteger(column) && column >= 1 ? column : 1,
     };
+  }
+
+  initialPosition() {
+    const position = this.pendingPosition;
+    this.pendingPosition = null;
+    return position;
   }
 
   focusEditor() {
